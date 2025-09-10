@@ -1,10 +1,13 @@
 package logger
 
+// 提供日志初始化功能
+
 import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+// InitLogger 初始化全局日志记录器
 func InitLogger() {
 	var cfg zap.Config
 
@@ -12,13 +15,13 @@ func InitLogger() {
 	cfg.EncoderConfig.StacktraceKey = ""
 	cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 
-	// Build the logger and handle any errors
+	// 构建日志器并处理可能的错误
 	var err error
 	logger, err := cfg.Build()
 	if err != nil {
-		zap.L().Fatal("Error building logger", zap.Error(err))
+		zap.L().Fatal("构建日志器失败", zap.Error(err))
 	}
 
-	// Set the global logger to the newly created instance
+	// 替换全局日志器
 	zap.ReplaceGlobals(logger)
 }

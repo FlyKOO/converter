@@ -1,5 +1,7 @@
 package utils
 
+// 与交易解析相关的辅助函数
+
 import (
 	"bytes"
 	"errors"
@@ -9,18 +11,19 @@ import (
 	pb "github.com/rpcpool/yellowstone-grpc/examples/golang/proto"
 )
 
+// ProcessTransactionToStruct 将订阅的交易更新转换为结构体信息
 func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature string) (*shared.TransactionDetails, error) {
 	if tx == nil || tx.Transaction == nil {
-		return nil, errors.New("transaction is nil")
+		return nil, errors.New("交易为空")
 	}
 
 	meta := tx.Transaction.GetMeta()
 	msg := tx.GetTransaction().GetTransaction().GetMessage()
 	if msg == nil {
-		return nil, errors.New("transaction message is nil")
+		return nil, errors.New("交易消息为空")
 	}
 
-	// Create transaction details structure with basic info
+	// 创建交易详情结构体，填充基本信息
 	txDetails := &shared.TransactionDetails{
 		Signature:            signature,
 		ComputeUnitsConsumed: meta.GetComputeUnitsConsumed(),
@@ -32,13 +35,13 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 		},
 	}
 
-	// Process accounts and build account reference map for fast lookups
+	// 处理账户列表并构建快速查询映射
 	accountKeys := msg.GetAccountKeys()
 	signersIndexes := msg.Header.GetNumRequiredSignatures()
 	readSigners := msg.Header.GetNumReadonlySignedAccounts()
 	readNonSigners := msg.Header.GetNumReadonlyUnsignedAccounts()
 
-	// Create a map for quick access to account properties
+	// 创建账户属性映射，便于快速访问
 	accountMap := make(map[string]shared.AccountReference, len(accountKeys))
 	accountList := make([]shared.AccountReference, len(accountKeys))
 
@@ -50,18 +53,18 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 
 		switch {
 		case i < int(signersIndexes):
-			// Writable signer accounts
+			// 可写签名账户
 			ref.IsWritable = true
 			ref.IsSigner = true
 		case i < int(signersIndexes+readSigners):
-			// Readonly signer accounts
+			// 只读签名账户
 			ref.IsReadable = true
 			ref.IsSigner = true
 		case i < int(int(signersIndexes)+int(readSigners)+(len(accountKeys)-int(signersIndexes+readSigners+readNonSigners))):
-			// Writable non-signer accounts
+			// 可写非签名账户
 			ref.IsWritable = true
 		default:
-			// Readonly non-signer accounts
+			// 只读非签名账户
 			ref.IsReadable = true
 		}
 
@@ -69,7 +72,7 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 		accountMap[pubKey] = ref
 	}
 
-	// Process balance changes
+	// 处理余额变化
 	preBalances := meta.GetPreBalances()
 	postBalances := meta.GetPostBalances()
 	balanceChanges := make([]shared.BalanceChanges, len(accountKeys))
@@ -81,7 +84,7 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 		pubKey := base58.Encode(account)
 		accRef := accountMap[pubKey]
 
-		// Update writable/readable status based on loaded addresses
+		// 根据加载的地址更新可读写状态
 		if contains(loadedWritable, account) {
 			accRef.IsWritable = true
 			accRef.IsLut = true
@@ -99,8 +102,8 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 	}
 	txDetails.BalanceChanges = balanceChanges
 
-	// Create merged accounts list for instruction processing
-	// Pre-allocate slice with exact capacity needed
+	// 为指令解析创建合并后的账户列表
+	// 预分配所需容量
 	mergedAccounts := make([][]byte, 0, len(accountKeys)+
 		len(loadedWritable)+
 		len(loadedReadonly))
@@ -108,14 +111,14 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 	mergedAccounts = append(mergedAccounts, loadedWritable...)
 	mergedAccounts = append(mergedAccounts, loadedReadonly...)
 
-	// Process instructions
+	// 解析指令
 	instructions := msg.GetInstructions()
 	txDetails.Instructions = make([]shared.InstructionDetails, len(instructions))
 
 	for idx, inst := range instructions {
 		programIdIndex := inst.GetProgramIdIndex()
 		if int(programIdIndex) >= len(mergedAccounts) {
-			// zap.L().Fatal("Invalid program ID index",
+			// zap.L().Fatal("程序 ID 索引无效",
 			// 	zap.Uint32("program_id_index", programIdIndex),
 			// 	zap.Int("accounts_length", len(mergedAccounts)))
 			continue
@@ -136,13 +139,13 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 			Data: inst.GetData(),
 		}
 
-		// Process accounts
+		// 处理指令中引用的账户
 		accounts := inst.GetAccounts()
 		instruction.Accounts = make([]shared.AccountReference, len(accounts))
 
 		for accIdx, accIndex := range accounts {
 			if int(accIndex) >= len(mergedAccounts) {
-				// zap.L().Fatal("Invalid account index",
+				// zap.L().Fatal("账户索引无效",
 				// zap.Int("account_index", int(accIndex)),
 				// zap.Int("accounts_length", len(mergedAccounts)))
 				continue
@@ -160,14 +163,14 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 			}
 		}
 
-		// Process inner instructions
+		// 处理内层指令
 		if innerInsts := getInnerInstructions(meta, uint32(idx)); len(innerInsts) > 0 {
 			instruction.InnerInstructions = make([]shared.InnerInstructionDetails, len(innerInsts))
 
 			for innerIdx, inner := range innerInsts {
 				innerProgramIdIndex := inner.GetProgramIdIndex()
 				if int(innerProgramIdIndex) >= len(mergedAccounts) {
-					// zap.L().Fatal("Invalid inner program ID index",
+					// zap.L().Fatal("内层程序 ID 索引无效",
 					// 	zap.Uint32("program_id_index", innerProgramIdIndex),
 					// 	zap.Int("accounts_length", len(mergedAccounts)))
 					continue
@@ -185,13 +188,13 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 					Data: inner.GetData(),
 				}
 
-				// Process inner accounts
+				// 处理内层指令涉及的账户
 				innerAccounts := inner.GetAccounts()
 				innerInstruction.Accounts = make([]shared.AccountReference, len(innerAccounts))
 
 				for accIdx, accIndex := range innerAccounts {
 					if int(accIndex) >= len(mergedAccounts) {
-						// zap.L().Fatal("Invalid inner account index",
+						// zap.L().Fatal("内层账户索引无效",
 						// 	zap.Int("account_index", int(accIndex)),
 						// 	zap.Int("accounts_length", len(mergedAccounts)))
 						continue
@@ -218,7 +221,7 @@ func ProcessTransactionToStruct(tx *pb.SubscribeUpdateTransaction, signature str
 	return txDetails, nil
 }
 
-// Simple contains function using bytes.Equal
+// contains 判断字节切片 s 中是否包含元素 e
 func contains(s [][]byte, e []byte) bool {
 	for _, a := range s {
 		if bytes.Equal(a, e) {
@@ -228,7 +231,7 @@ func contains(s [][]byte, e []byte) bool {
 	return false
 }
 
-// getInnerInstructions retrieves inner instructions for a given index
+// getInnerInstructions 根据索引获取内层指令列表
 func getInnerInstructions(meta *pb.TransactionStatusMeta, index uint32) []*pb.InnerInstruction {
 	if meta == nil {
 		return nil
